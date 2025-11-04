@@ -300,7 +300,25 @@ class OllamaLLMAdapter(ILLMService):
         
         if params is None:
             logger.error("Could not find JSON parameters")
-            raise ValueError("LLM response missing parameters")
+            logger.error(f"Response blocks: {response_blocks}")
+            # Try to be more lenient - look for ANY JSON array, even with trailing commas
+            for idx, block_info in enumerate(response_blocks):
+                block = block_info['content'].strip()
+                if block.startswith('['):
+                    # Try to fix common JSON issues
+                    fixed_block = block.rstrip(',').strip()
+                    if fixed_block.endswith(','):
+                        fixed_block = fixed_block[:-1]
+                    try:
+                        params = json.loads(fixed_block)
+                        logger.info(f"✓ Fixed and parsed JSON params (block {idx}): {params}")
+                        params_block_idx = idx
+                        break
+                    except json.JSONDecodeError as e:
+                        logger.warning(f"Block {idx} JSON fix attempt failed: {e}")
+            
+            if params is None:
+                raise ValueError("LLM response missing parameters")
         
         if not isinstance(params, list):
             raise ValueError("Parameters must be a JSON array")
@@ -341,12 +359,29 @@ class OllamaLLMAdapter(ILLMService):
             logger.error("Could not find WHERE clause in any block")
             for i, b_info in enumerate(response_blocks):
                 logger.error(f"  Block {i}: {b_info['content'][:100]}")
-            raise ValueError("Could not extract WHERE clause from LLM response")
+            
+            # Last resort: try to find ANY block with 'propiedades' and extract conditions
+            for idx, block_info in enumerate(response_blocks):
+                if idx == params_block_idx:
+                    continue
+                block = block_info['content']
+                if 'propiedades' in block.lower() or '%s' in block:
+                    logger.info(f"Last resort: using block {idx} as WHERE")
+                    where_clause = block
+                    break
+            
+            if where_clause is None:
+                raise ValueError("Could not extract WHERE clause from LLM response")
         
         # Clean up WHERE clause
         where_clause = where_clause.strip()
         where_clause = re.sub(r'^WHERE\s+', '', where_clause, flags=re.IGNORECASE)
         where_clause = re.sub(r'^(?:sql|mysql|SQL|MYSQL)?\s*', '', where_clause, flags=re.IGNORECASE)
+        where_clause = where_clause.rstrip(';').strip()  # Remove trailing semicolon
+        
+        # Remove trailing closing backticks if present
+        if where_clause.endswith('```'):
+            where_clause = where_clause[:-3].strip()
         
         logger.info(f"✓ Final WHERE: {where_clause[:80]}")
         logger.info(f"✓ Final PARAMS: {params}")
