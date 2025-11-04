@@ -222,37 +222,35 @@ class OllamaLLMAdapter(ILLMService):
 
     def _parse_markdown_response(self, response_text: str) -> Tuple[str, list]:
         """
-        Parse Markdown response with SQL and params code blocks.
+        Parse Markdown response from LLM to extract WHERE clause and parameters.
+        Then builds complete SQL query with fixed SELECT, FROM, and GROUP BY.
         
-        Expected format:
-        ## SQL Query
-        ```sql
-        SELECT * FROM propiedades WHERE ...
+        Expected format (from new prompt):
+        ### WHERE Clause
+        ```
+        propiedades.tipo = %s AND propiedades.habitaciones = %s AND propiedades.estado = 'activa'
         ```
         
-        ## Parameters
+        ### Parameters
         ```json
-        [value1, value2, ...]
+        ["casa", 3]
         ```
-        
-        Args:
-            response_text: Markdown response from LLM
             
         Returns:
-            Tuple of (sql, params)
+            Tuple of (complete_sql, params)
             
         Raises:
             ValueError: If parsing fails
         """
         logger.debug(f"Full LLM response:\n{response_text}\n")
         
-        # Extract SQL block
-        sql_match = re.search(r'```(?:mysql)?\s*(SELECT[^`]*?)\s*```', response_text, re.IGNORECASE | re.DOTALL)
-        if not sql_match:
-            logger.error(f"Could not find SQL block in response: {response_text}")
-            raise ValueError("LLM response missing SQL code block")
+        # Extract WHERE clause
+        where_match = re.search(r'### WHERE Clause\s*```\s*(.*?)\s*```', response_text, re.IGNORECASE | re.DOTALL)
+        if not where_match:
+            logger.error(f"Could not find WHERE clause in response: {response_text}")
+            raise ValueError("LLM response missing WHERE clause")
         
-        sql = sql_match.group(1).strip()
+        where_clause = where_match.group(1).strip()
         
         # Extract params block (JSON array)
         params_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response_text, re.DOTALL)
@@ -269,8 +267,30 @@ class OllamaLLMAdapter(ILLMService):
         if not isinstance(params, list):
             raise ValueError("Parameters must be a JSON array")
         
-        logger.debug(f"Parsed Markdown - SQL: {sql[:60]}... Params: {params}")
-        logger.debug(f"Full SQL: {sql}")
+        # Build complete SQL query with fixed SELECT, FROM, and GROUP BY
+        complete_sql = f"""SELECT 
+  propiedades.id,
+  propiedades.titulo,
+  propiedades.descripcion,
+  propiedades.tipo,
+  propiedades.precio,
+  propiedades.habitaciones,
+  propiedades.banos,
+  propiedades.area_m2,
+  propiedades.ubicacion,
+  propiedades.zona_administrativa,
+  propiedades.fecha_publicacion,
+  GROUP_CONCAT(DISTINCT a.tipo ORDER BY a.tipo) as amenidades_tipos,
+  GROUP_CONCAT(DISTINCT CONCAT(a.nombre, ' (', pa.distancia_km, 'km)') ORDER BY pa.distancia_km) as amenidades_cercanas
+FROM propiedades
+LEFT JOIN propiedades_amenidades pa ON propiedades.id = pa.propiedad_id
+LEFT JOIN amenidades a ON pa.amenidad_id = a.id
+WHERE {where_clause}
+GROUP BY propiedades.id
+ORDER BY propiedades.fecha_publicacion DESC"""
+        
+        logger.debug(f"Parsed Markdown - WHERE: {where_clause[:60]}... Params: {params}")
+        logger.debug(f"Full SQL: {complete_sql}")
         logger.debug(f"Full Params: {params}")
-        return sql, params
+        return complete_sql, params
 
