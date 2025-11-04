@@ -130,17 +130,21 @@ propiedades.tipo = %s AND propiedades.habitaciones >= %s AND propiedades.precio 
 
 ---
 
-## RESPONSE FORMAT (no extra text)
+## YOUR RESPONSE
+
+YOU MUST RESPOND WITH ONLY:
 
 ### WHERE Clause
 ```
-propiedades.tipo = %s AND propiedades.habitaciones = %s AND propiedades.estado = 'activa'
+[WRITE YOUR WHERE CLAUSE HERE - ONLY YOUR CLAUSE, NOT THE EXAMPLES ABOVE]
 ```
 
 ### Parameters
 ```json
-["casa", 3]
+[WRITE YOUR PARAMETERS ARRAY HERE - ONLY YOUR PARAMS]
 ```
+
+DO NOT include any examples or other text. DO NOT repeat the examples above. ONLY respond with YOUR clauses and parameters.
 
 ---
 

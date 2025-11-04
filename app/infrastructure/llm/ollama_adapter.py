@@ -84,7 +84,11 @@ class OllamaLLMAdapter(ILLMService):
             logger.debug(f"Ollama response: {response_text[:150]}...")
             
             # Parse Markdown response - extract SQL and params from code blocks
-            sql, params = self._parse_markdown_response(response_text)
+            try:
+                sql, params = self._parse_markdown_response(response_text)
+            except ValueError as parse_error:
+                logger.error(f"✗ Failed to parse LLM response. Full response:\n{response_text}")
+                raise
             
             logger.info(f"✓ Generated SQL with {len(params)} parameters")
             logger.info(f"  SQL: {sql}")
@@ -222,52 +226,132 @@ class OllamaLLMAdapter(ILLMService):
 
     def _parse_markdown_response(self, response_text: str) -> Tuple[str, list]:
         """
-        Parse Markdown response from LLM to extract WHERE clause and parameters.
-        Then builds complete SQL query with fixed SELECT, FROM, and GROUP BY.
+        Parse LLM response - adaptable to what the agent produces.
         
-        Expected format (from new prompt):
-        ### WHERE Clause
-        ```
-        propiedades.tipo = %s AND propiedades.habitaciones = %s AND propiedades.estado = 'activa'
-        ```
+        Handles 3 cases:
+        1. Only WHERE clause → use it with our SQL template
+        2. Full SQL (SELECT...FROM...WHERE...GROUP BY) → extract WHERE and use
+        3. Partial/mixed SQL → find WHERE and extract
         
-        ### Parameters
-        ```json
-        ["casa", 3]
-        ```
-            
+        Smart parsing: Skips example blocks from prompt, only parses actual response.
+        
         Returns:
             Tuple of (complete_sql, params)
-            
-        Raises:
-            ValueError: If parsing fails
         """
-        logger.debug(f"Full LLM response:\n{response_text}\n")
+        logger.info(f"Parsing response (length: {len(response_text)})")
         
-        # Extract WHERE clause
-        where_match = re.search(r'### WHERE Clause\s*```\s*(.*?)\s*```', response_text, re.IGNORECASE | re.DOTALL)
-        if not where_match:
-            logger.error(f"Could not find WHERE clause in response: {response_text}")
-            raise ValueError("LLM response missing WHERE clause")
+        # Extract code blocks - but also track their positions
+        code_block_pattern = r'```[^\n]*\n?(.*?)\n?```'
+        code_blocks = []
+        for match in re.finditer(code_block_pattern, response_text, re.DOTALL):
+            code_blocks.append({
+                'content': match.group(1).strip(),
+                'start': match.start(),
+                'end': match.end()
+            })
         
-        where_clause = where_match.group(1).strip()
+        if not code_blocks:
+            logger.error(f"No code blocks found in response")
+            raise ValueError("LLM response missing code blocks")
         
-        # Extract params block (JSON array)
-        params_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response_text, re.DOTALL)
-        if not params_match:
-            logger.error(f"Could not find params block in response: {response_text}")
-            raise ValueError("LLM response missing parameters JSON block")
+        logger.info(f"Found {len(code_blocks)} code blocks")
         
-        try:
-            params = json.loads(params_match.group(1))
-        except json.JSONDecodeError as e:
-            logger.error(f"Invalid JSON in params block: {params_match.group(1)}")
-            raise ValueError(f"Invalid JSON in parameters: {str(e)}")
+        # Find the last occurrence of "YOUR RESPONSE" or "User query:" to identify where answer starts
+        # Blocks after this point are the actual response, not examples
+        answer_start_marker = "YOUR RESPONSE"
+        user_query_marker = "User query:"
+        
+        last_marker_pos = 0
+        if answer_start_marker in response_text:
+            last_marker_pos = response_text.rfind(answer_start_marker)
+            logger.info(f"Found 'YOUR RESPONSE' marker at position {last_marker_pos}")
+        elif user_query_marker in response_text:
+            last_marker_pos = response_text.rfind(user_query_marker)
+            logger.info(f"Found 'User query:' marker at position {last_marker_pos}")
+        
+        # Filter: only use code blocks that come AFTER the marker (actual response)
+        # If no marker found, use only the LAST blocks to be safe
+        if last_marker_pos > 0:
+            response_blocks = [b for b in code_blocks if b['start'] > last_marker_pos]
+            logger.info(f"After marker filter: {len(response_blocks)} blocks (were {len(code_blocks)})")
+        else:
+            # Use last 3 blocks (usually: WHERE, params, and maybe something else)
+            response_blocks = code_blocks[-3:] if len(code_blocks) >= 3 else code_blocks
+            logger.info(f"No marker found, using last {len(response_blocks)} blocks")
+        
+        if not response_blocks:
+            logger.error(f"No response blocks found after filtering")
+            response_blocks = code_blocks  # Fallback to all
+        
+        # Step 1: Find JSON parameters (always in a separate block starting with [)
+        params = None
+        params_block_idx = -1
+        
+        for idx, block_info in enumerate(response_blocks):
+            block = block_info['content']
+            if block.startswith('['):
+                try:
+                    params = json.loads(block)
+                    params_block_idx = idx
+                    logger.info(f"✓ Found JSON params (block {idx}): {params}")
+                    break
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Block {idx} looks like JSON but parse failed: {e}")
+        
+        if params is None:
+            logger.error("Could not find JSON parameters")
+            raise ValueError("LLM response missing parameters")
         
         if not isinstance(params, list):
             raise ValueError("Parameters must be a JSON array")
         
-        # Build complete SQL query with fixed SELECT, FROM, and GROUP BY
+        # Step 2: Find WHERE clause in the remaining blocks
+        where_clause = None
+        
+        for idx, block_info in enumerate(response_blocks):
+            # Skip the JSON block
+            if idx == params_block_idx:
+                continue
+            
+            block = block_info['content']
+            
+            logger.debug(f"Analyzing block {idx}: {block[:80]}")
+            
+            # Case 1: Full SQL statement
+            if self._is_full_sql(block):
+                logger.info(f"✓ Block {idx} is full SQL, extracting WHERE")
+                where_clause = self._extract_where_from_full_sql(block, params)
+                if where_clause:
+                    break
+            
+            # Case 2: Only WHERE clause (conditions without SELECT/FROM)
+            elif self._is_only_where_clause(block):
+                logger.info(f"✓ Block {idx} is WHERE clause only")
+                where_clause = block
+                break
+            
+            # Case 3: Partial SQL with WHERE keyword visible
+            elif 'WHERE' in block.upper():
+                logger.info(f"✓ Block {idx} contains WHERE keyword, extracting")
+                where_clause = self._extract_where_from_full_sql(block, params)
+                if where_clause:
+                    break
+        
+        if where_clause is None:
+            logger.error("Could not find WHERE clause in any block")
+            for i, b_info in enumerate(response_blocks):
+                logger.error(f"  Block {i}: {b_info['content'][:100]}")
+            raise ValueError("Could not extract WHERE clause from LLM response")
+        
+        # Clean up WHERE clause
+        where_clause = where_clause.strip()
+        where_clause = re.sub(r'^WHERE\s+', '', where_clause, flags=re.IGNORECASE)
+        where_clause = re.sub(r'^(?:sql|mysql|SQL|MYSQL)?\s*', '', where_clause, flags=re.IGNORECASE)
+        
+        logger.info(f"✓ Final WHERE: {where_clause[:80]}")
+        logger.info(f"✓ Final PARAMS: {params}")
+        
+        # Build complete SQL with our template
         complete_sql = f"""SELECT 
   propiedades.id,
   propiedades.titulo,
@@ -289,8 +373,47 @@ WHERE {where_clause}
 GROUP BY propiedades.id
 ORDER BY propiedades.fecha_publicacion DESC"""
         
-        logger.debug(f"Parsed Markdown - WHERE: {where_clause[:60]}... Params: {params}")
-        logger.debug(f"Full SQL: {complete_sql}")
-        logger.debug(f"Full Params: {params}")
         return complete_sql, params
 
+    def _extract_where_from_full_sql(self, full_sql: str, params: list = None) -> str:
+        """
+        Extract WHERE clause from a full SQL statement.
+        
+        Handles:
+        - SELECT ... FROM ... WHERE ... GROUP BY
+        - Multiline formatting
+        - Various spacing
+        
+        Args:
+            full_sql: Complete SQL query with WHERE clause
+            params: Optional params list (for validation)
+            
+        Returns:
+            WHERE clause without the "WHERE" keyword
+        """
+        logger.debug(f"Extracting WHERE from full SQL (params: {params})")
+        
+        # Find WHERE clause - match from WHERE to GROUP/ORDER/LIMIT or end
+        where_pattern = r'WHERE\s+(.*?)(?:\s+GROUP\s+BY|\s+ORDER\s+BY|\s+LIMIT|$)'
+        match = re.search(where_pattern, full_sql, re.IGNORECASE | re.DOTALL)
+        
+        if match:
+            where_clause = match.group(1).strip()
+            logger.debug(f"✓ Extracted WHERE: {where_clause[:80]}")
+            return where_clause
+        
+        logger.warning("Could not extract WHERE from full SQL")
+        return None
+
+    def _is_full_sql(self, text: str) -> bool:
+        """Check if text is a full SQL query (has SELECT and FROM and WHERE)"""
+        text_upper = text.upper()
+        return ('SELECT' in text_upper and 'FROM' in text_upper and 'WHERE' in text_upper)
+
+    def _is_only_where_clause(self, text: str) -> bool:
+        """Check if text is only a WHERE clause (has conditions but not SELECT/FROM)"""
+        text_upper = text.upper()
+        has_where_keywords = ('WHERE' not in text_upper and  # Doesn't start with WHERE keyword
+                             ('%s' in text or 'propiedades' in text or 
+                              ('AND' in text_upper or 'OR' in text_upper)))
+        return has_where_keywords and not ('SELECT' in text_upper or 'FROM' in text_upper)
