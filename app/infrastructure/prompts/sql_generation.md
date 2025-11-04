@@ -66,10 +66,10 @@ Extract from user query:
 | "más de 500k" | `propiedades.precio > %s` |
 | "menos de 200k" | `propiedades.precio < %s` |
 | "entre 200k y 500k" | `propiedades.precio BETWEEN %s AND %s` |
-| "casas" | `propiedades.tipo = %s` |
-| "zona X" | `propiedades.zona_administrativa = %s` |
-| "cerca de parques" | `a.tipo = %s` |
-| "cercano a colegio" | `a.tipo = %s` |
+| "casas" | `LOWER(propiedades.tipo) = LOWER(%s)` |
+| "zona X" | `LOWER(propiedades.zona_administrativa) = LOWER(%s)` |
+| "cerca de parques" | `LOWER(a.tipo) = LOWER(%s)` |
+| "cercano a colegio" | `LOWER(a.tipo) = LOWER(%s)` |
 | "múltiples condiciones" | Combine with AND/OR |
 
 ---
@@ -130,21 +130,27 @@ propiedades.tipo = %s AND propiedades.habitaciones >= %s AND propiedades.precio 
 
 ---
 
-## YOUR RESPONSE
+## YOUR RESPONSE FORMAT (CRITICAL - FOLLOW EXACTLY)
 
-YOU MUST RESPOND WITH ONLY:
+You MUST respond with EXACTLY 2 code blocks in markdown format. Nothing else.
 
-### WHERE Clause
+**Block 1:**
 ```
-[WRITE YOUR WHERE CLAUSE HERE - ONLY YOUR CLAUSE, NOT THE EXAMPLES ABOVE]
+your_where_clause_here
 ```
 
-### Parameters
+**Block 2:**
 ```json
-[WRITE YOUR PARAMETERS ARRAY HERE - ONLY YOUR PARAMS]
+["param1", "param2"]
 ```
 
-DO NOT include any examples or other text. DO NOT repeat the examples above. ONLY respond with YOUR clauses and parameters.
+⚠️ RULES:
+- ONLY WHERE conditions, no SELECT/FROM/GROUP BY
+- Do NOT include the word "WHERE" in block 1
+- Block 1 = plain text only
+- Block 2 = valid JSON array only
+- No explanations, examples, or other text outside these 2 blocks
+- No repetition of examples from above
 
 ---
 

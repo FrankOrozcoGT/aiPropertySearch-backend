@@ -149,19 +149,24 @@ class DatabaseConnection:
         Returns:
             True if connected and healthy
         """
+        cursor = None
         try:
             if not self._connection or not self._connection.is_connected():
                 return False
             
             # Test with simple query
-            cursor = self._connection.cursor()
+            cursor = self._connection.cursor(buffered=True)
             cursor.execute("SELECT 1")
-            cursor.close()
+            cursor.fetchall()  # Consume results
             return True
             
         except Exception as e:
             logger.warning(f"Health check failed: {str(e)}")
             return False
+        
+        finally:
+            if cursor:
+                cursor.close()
 
 
 # Singleton database connection
