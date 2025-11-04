@@ -1,4 +1,5 @@
 """Prompt Service Adapter - Load prompts from markdown files"""
+import json
 import logging
 import os
 from app.domain.ports.prompt_service import IPromptService
@@ -44,30 +45,27 @@ class MarkdownPromptAdapter(IPromptService):
         return prompt_content.format(query=query)
 
     def get_fix_sql_parameters_prompt(self, query: str, sql: str, params: list, 
-                                       placeholder_count: int) -> str:
+                                       error: str = None, placeholder_count: int = None) -> str:
         """
-        Get the fix SQL parameters prompt for correcting incomplete parameters.
+        Get the fix SQL prompt for correcting SQL errors.
         
         Args:
             query: User's original natural language query
-            sql: The generated SQL template with ? placeholders
+            sql: The generated SQL template with %s placeholders
             params: Current parameters array
-            placeholder_count: Number of ? placeholders in SQL
+            error: Error message from SQLAlchemy validation
+            placeholder_count: Number of %s placeholders in SQL (legacy param)
             
         Returns:
-            Formatted prompt for LLM to fix parameters
+            Formatted prompt for LLM to fix SQL
         """
         prompt_content = self._load_prompt("fix_sql_parameters.md")
-        param_count = len(params)
-        missing_count = placeholder_count - param_count
         
         return prompt_content.format(
             query=query,
             sql=sql,
-            params=params,
-            placeholder_count=placeholder_count,
-            param_count=param_count,
-            missing_count=missing_count
+            params=json.dumps(params),
+            error=error or "Unknown error"
         )
 
     def _load_prompt(self, filename: str) -> str:

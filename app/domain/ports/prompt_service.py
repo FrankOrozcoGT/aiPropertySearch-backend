@@ -24,17 +24,18 @@ class IPromptService(ABC):
 
     @abstractmethod
     def get_fix_sql_parameters_prompt(self, query: str, sql: str, params: list, 
-                                       placeholder_count: int) -> str:
+                                       error: str = None, placeholder_count: int = None) -> str:
         """
-        Get the prompt for fixing incomplete SQL parameters.
+        Get the prompt for fixing SQL query errors.
         
         Args:
             query: User's original natural language query
-            sql: Generated SQL template with ? placeholders
+            sql: Generated SQL template with %s placeholders
             params: Current parameters array
-            placeholder_count: Number of ? placeholders in SQL
+            error: Error message from SQLAlchemy validation
+            placeholder_count: Number of %s placeholders in SQL (optional, for legacy)
             
         Returns:
-            Prompt for LLM to fix missing parameters
+            Prompt for LLM to fix SQL errors
         """
         pass
