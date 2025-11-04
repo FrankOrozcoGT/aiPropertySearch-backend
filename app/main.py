@@ -61,6 +61,12 @@ async def lifespan(app: FastAPI):
         logger.info("✓ MySQL repository ready")
         logger.info(f"✓ Ollama LLM ready ({settings.OLLAMA_MODEL})")
         
+        # Register routers after service container is initialized
+        search_use_case = service_container.get_search_property_use_case()
+        search_router = create_search_router(search_use_case)
+        app.include_router(search_router, prefix=settings.API_PREFIX)
+        logger.info(f"✓ Search router registered at {settings.API_PREFIX}/search")
+        
         logger.info("✅ Application started successfully")
         
     except Exception as e:
@@ -139,15 +145,6 @@ async def ready_check() -> dict:
         "version": settings.APP_VERSION,
     }
 
-
-# Include routers
-if service_container:
-    search_use_case = service_container.get_search_property_use_case()
-    search_router = create_search_router(search_use_case)
-    app.include_router(search_router, prefix=settings.API_PREFIX)
-    logger.info(f"✓ Search router registered at {settings.API_PREFIX}/search")
-else:
-    logger.warning("⚠️ Service container not initialized - routers not registered")
 
 logger.info(f"✓ FastAPI app initialized: {settings.APP_NAME} v{settings.APP_VERSION}")
 
