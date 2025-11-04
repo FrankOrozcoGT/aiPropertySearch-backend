@@ -9,3 +9,4 @@ sqlglot==27.29.0
 sqlalchemy==2.0.44
 alembic==1.17.1
 aiomysql==0.3.2
+mysql-connector-python==9.1.0

@@ -17,6 +17,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copiar código
 COPY . .
 
+# Marcar que estamos en Docker
+ENV DOCKER_ENV=1
+
 # Exponer puerto
 EXPOSE 8000
 

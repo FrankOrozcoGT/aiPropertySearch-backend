@@ -108,7 +108,7 @@ class DatabaseConnection:
         RECOMMENDED: Uses mysql-connector's built-in parameter escaping for security.
         
         Args:
-            sql: SELECT query template with ? placeholders
+            sql: SELECT query template with %s placeholders (MySQL style)
             params: Array of parameter values
             
         Returns:
@@ -124,6 +124,7 @@ class DatabaseConnection:
             cursor = connection.cursor(dictionary=True, buffered=True)
             
             logger.debug(f"Executing parameterized query: {sql[:100]}... with {len(params)} params")
+            logger.debug(f"  Params: {params}")
             
             # mysql-connector automatically escapes parameters when tuple is passed
             cursor.execute(sql, tuple(params))

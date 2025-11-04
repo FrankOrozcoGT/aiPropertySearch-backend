@@ -4,6 +4,7 @@ import logging
 from app.domain.use_cases.search_property import SearchPropertyUseCase
 from app.domain.ports.property_repository import IPropertyRepository
 from app.domain.ports.llm_service import ILLMService
+from app.domain.ports.prompt_service import IPromptService
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class ServiceContainer:
         self,
         property_repository: IPropertyRepository,
         llm_service: ILLMService,
+        prompt_service: IPromptService = None,
     ):
         """
         Initialize service container with adapters.
@@ -27,9 +29,11 @@ class ServiceContainer:
         Args:
             property_repository: Implementation of IPropertyRepository
             llm_service: Implementation of ILLMService
+            prompt_service: Implementation of IPromptService (optional)
         """
         self._property_repository = property_repository
         self._llm_service = llm_service
+        self._prompt_service = prompt_service
 
     def get_search_property_use_case(self) -> SearchPropertyUseCase:
         """

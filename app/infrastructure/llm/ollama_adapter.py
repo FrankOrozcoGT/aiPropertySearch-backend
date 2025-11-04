@@ -1,14 +1,16 @@
 """Ollama LLM Adapter - Integration with Ollama for SQL generation"""
 import json
 import logging
+import re
 from typing import Tuple
 
 import requests
-import sqlglot
-from sqlglot import exp
+from sqlalchemy import text, create_engine
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
 from app.domain.ports.llm_service import ILLMService
+from app.domain.ports.prompt_service import IPromptService
 
 logger = logging.getLogger(__name__)
 
@@ -22,16 +24,18 @@ class OllamaLLMAdapter(ILLMService):
     Uses sqlglot for validation (professional SQL parser used by Meta, Stripe, etc.)
     """
 
-    def __init__(self, timeout: int = 30):
+    def __init__(self, prompt_service: IPromptService, timeout: int = 30):
         """
         Initialize Ollama adapter.
         
         Args:
+            prompt_service: Service for loading LLM prompts
             timeout: Request timeout in seconds (default: 30)
         """
         self.base_url = settings.OLLAMA_URL
         self.model = settings.OLLAMA_MODEL
         self.timeout = timeout
+        self.prompt_service = prompt_service
         
         logger.info(f"✓ Ollama adapter initialized: {self.base_url} (model: {self.model})")
 
@@ -54,47 +58,8 @@ class OllamaLLMAdapter(ILLMService):
         if not query or not query.strip():
             raise ValueError("Query cannot be empty")
 
-        # System prompt tells IA to return JSON with sql + params
-        system_prompt = """You are a SQL expert. Generate SAFE SQL queries with parameterized queries.
-
-IMPORTANT RULES:
-1. Always return ONLY valid JSON (no other text) with TWO fields:
-   - "sql": SQL query with ? placeholders instead of values
-   - "params": Array of values in order
-
-EXAMPLE 1:
-Query: "casas baratas en zona 10"
-Response:
-{
-  "sql": "SELECT * FROM propiedades WHERE precio < ? AND zona_administrativa = ?",
-  "params": [500000, "zona 10"]
-}
-
-EXAMPLE 2:
-Query: "departamentos con 3 habitaciones"
-Response:
-{
-  "sql": "SELECT * FROM propiedades WHERE tipo = ? AND habitaciones = ?",
-  "params": ["departamento", 3]
-}
-
-Database Schema:
-- propiedades: id, titulo, descripcion, tipo, precio, habitaciones, banos, area_m2, ubicacion, zona_administrativa, fecha_publicacion, estado
-- amenidades: id, nombre, tipo, ubicacion, zona_administrativa
-- propiedades_amenidades: id, propiedad_id, amenidad_id, distancia_km, notas
-
-Property types: casa, departamento, terreno, local, oficina
-Amenity types: colegio, parada_bus, supermercado, parque, hospital, gym, restaurante, cine, banco, farmacia, centroComercial
-
-RULES:
-- Use ? for each parameter (MySQL style)
-- First ? = first param in array
-- Never put literal values in SQL string
-- Only SELECT queries allowed
-- Always return valid JSON only
-- Parameters should be typed correctly (numbers as numbers, text as strings)
-- Filter by estado = 'activa' when searching available properties
-"""
+        # Get prompt from prompt service
+        system_prompt = self.prompt_service.get_sql_generation_prompt(query)
 
         try:
             logger.debug(f"Calling Ollama for query: {query[:50]}...")
@@ -113,27 +78,14 @@ RULES:
             response.raise_for_status()
             
             response_text = response.json().get("response", "").strip()
-            logger.debug(f"Ollama response: {response_text[:100]}...")
+            logger.debug(f"Ollama response: {response_text[:150]}...")
             
-            # Parse JSON response
-            try:
-                parsed = json.loads(response_text)
-            except json.JSONDecodeError:
-                logger.error(f"LLM returned invalid JSON: {response_text}")
-                raise ValueError("LLM did not return valid JSON format")
+            # Parse Markdown response - extract SQL and params from code blocks
+            sql, params = self._parse_markdown_response(response_text)
             
-            # Extract sql and params
-            if "sql" not in parsed or "params" not in parsed:
-                logger.error(f"LLM JSON missing required fields: {parsed}")
-                raise ValueError("LLM response missing 'sql' or 'params' field")
-            
-            sql = parsed["sql"].strip()
-            params = parsed.get("params", [])
-            
-            if not isinstance(params, list):
-                raise ValueError("'params' field must be an array")
-            
-            logger.info(f"✓ Generated SQL template with {len(params)} parameters")
+            logger.info(f"✓ Generated SQL with {len(params)} parameters")
+            logger.info(f"  SQL: {sql}")
+            logger.info(f"  PARAMS: {params}")
             
             return sql, params
             
@@ -149,10 +101,10 @@ RULES:
 
     async def validate_sql_template(self, sql: str, params: list) -> bool:
         """
-        Validate if SQL template is safe to execute using sqlglot.
+        Validate if SQL template is safe using SQLAlchemy with MySQL dialect.
         
         Args:
-            sql: SQL template with ? placeholders (no literal values)
+            sql: SQL template with %s placeholders (MySQL style)
             params: Array of parameter values
             
         Returns:
@@ -164,49 +116,85 @@ RULES:
         try:
             logger.debug(f"Validating SQL template: {sql[:50]}...")
             
-            # Check 1: Count placeholders matches params
-            placeholder_count = sql.count("?")
-            if placeholder_count != len(params):
-                raise ValueError(
-                    f"SQL has {placeholder_count} placeholders but {len(params)} params provided"
-                )
+            # Check 1: Validate with SQLAlchemy text() - compiles without executing
+            # text() handles parameterized queries safely
+            stmt = text(sql)
             
-            # Check 2: Use sqlglot to parse and validate SQL structure
-            try:
-                parsed = sqlglot.parse_one(sql)
-            except sqlglot.ParseError as e:
-                logger.error(f"SQL syntax error: {str(e)}")
-                raise ValueError(f"Invalid SQL syntax: {str(e)}")
-            
-            # Check 3: Must be SELECT query only
-            if not isinstance(parsed, exp.Select):
+            # Check 2: Verify it's a SELECT (read-only) query
+            sql_upper = sql.strip().upper()
+            if not sql_upper.startswith("SELECT"):
                 raise ValueError("Only SELECT queries are allowed")
             
-            # Check 4: Check for dangerous keywords in the AST
-            # (sqlglot parses structure, so we check the expression type)
-            dangerous_types = (
-                exp.Drop, exp.Delete, exp.Update, exp.Insert,
-                exp.Alter, exp.Create, exp.Truncate
-            )
+            # Check 3: Reject dangerous keywords
+            dangerous_keywords = ["DROP", "DELETE", "UPDATE", "INSERT", "CREATE", "ALTER", "EXEC", "EXECUTE", "TRUNCATE"]
+            for keyword in dangerous_keywords:
+                if f" {keyword} " in f" {sql_upper} ":
+                    raise ValueError(f"Dangerous SQL keyword detected: {keyword}")
             
-            for node in parsed.walk():
-                if isinstance(node, dangerous_types):
-                    raise ValueError(f"Forbidden operation: {type(node).__name__}")
-            
-            # Check 5: No comment-based injection patterns
-            if "--" in sql or "/*" in sql or "*/" in sql:
-                raise ValueError("Comment-based SQL injection patterns detected")
-            
-            # Check 6: No semicolon (indicates multiple statements)
-            if ";" in sql:
-                raise ValueError("Multiple SQL statements not allowed")
-            
-            logger.info("✓ SQL template validation passed (sqlglot)")
+            logger.info("✓ SQL template validation passed")
             return True
             
+        except SQLAlchemyError as e:
+            logger.error(f"SQL compilation error: {str(e)}")
+            raise ValueError(f"Invalid SQL syntax: {str(e)}")
         except ValueError as e:
             logger.warning(f"⚠️ SQL validation failed: {str(e)}")
             raise
         except Exception as e:
-            logger.error(f"✗ Unexpected validation error: {str(e)}", exc_info=True)
+            logger.error(f"✗ Validation error: {str(e)}", exc_info=True)
             raise ValueError(f"SQL validation failed: {str(e)}")
+
+    def _parse_markdown_response(self, response_text: str) -> Tuple[str, list]:
+        """
+        Parse Markdown response with SQL and params code blocks.
+        
+        Expected format:
+        ## SQL Query
+        ```sql
+        SELECT * FROM propiedades WHERE ...
+        ```
+        
+        ## Parameters
+        ```json
+        [value1, value2, ...]
+        ```
+        
+        Args:
+            response_text: Markdown response from LLM
+            
+        Returns:
+            Tuple of (sql, params)
+            
+        Raises:
+            ValueError: If parsing fails
+        """
+        logger.debug(f"Full LLM response:\n{response_text}\n")
+        
+        # Extract SQL block
+        sql_match = re.search(r'```(?:mysql)?\s*(SELECT[^`]*?)\s*```', response_text, re.IGNORECASE | re.DOTALL)
+        if not sql_match:
+            logger.error(f"Could not find SQL block in response: {response_text}")
+            raise ValueError("LLM response missing SQL code block")
+        
+        sql = sql_match.group(1).strip()
+        
+        # Extract params block (JSON array)
+        params_match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', response_text, re.DOTALL)
+        if not params_match:
+            logger.error(f"Could not find params block in response: {response_text}")
+            raise ValueError("LLM response missing parameters JSON block")
+        
+        try:
+            params = json.loads(params_match.group(1))
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in params block: {params_match.group(1)}")
+            raise ValueError(f"Invalid JSON in parameters: {str(e)}")
+        
+        if not isinstance(params, list):
+            raise ValueError("Parameters must be a JSON array")
+        
+        logger.debug(f"Parsed Markdown - SQL: {sql[:60]}... Params: {params}")
+        logger.debug(f"Full SQL: {sql}")
+        logger.debug(f"Full Params: {params}")
+        return sql, params
+

@@ -16,18 +16,18 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # Database Settings
-    DB_HOST: str = "mysql"
+    DB_HOST: str = "db"
     DB_PORT: int = 3306
-    DB_USER: str = "appuser"
-    DB_PASSWORD: str = "apppass"
-    DB_NAME: str = "propiedades_db"
+    DB_USER: str = "user"
+    DB_PASSWORD: str = "password"
+    DB_NAME: str = "propiedades"
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
 
     # LLM Settings (Ollama)
-    OLLAMA_URL: str = "http://host.docker.internal:11434"
+    OLLAMA_URL: str = "http://ollama:11434"
     OLLAMA_MODEL: str = "llama3.2:3b"
-    OLLAMA_TIMEOUT: int = 30  # seconds
+    OLLAMA_TIMEOUT: int = 30
 
     # API Settings
     CORS_ORIGINS: str = "*"

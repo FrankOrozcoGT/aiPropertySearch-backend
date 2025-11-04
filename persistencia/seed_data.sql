@@ -6,30 +6,19 @@
 -- ============================================================================
 
 INSERT INTO amenidades (nombre, tipo, ubicacion, zona_administrativa) VALUES
--- Colegios (Zona 10)
 ('Colegio Hermano Miguel', 'colegio', 'Calzada Roosevelt, Zona 10', 'Zona 10'),
 ('Instituto Técnico Maya', 'colegio', 'Avenida la Reforma, Zona 10', 'Zona 10'),
 ('Colegio Técnico Mixto', 'colegio', '7a Avenida, Zona 10', 'Zona 10'),
-
--- Colegios (Zona 15)
 ('Colegio Americano', 'colegio', 'Vista Hermosa, Zona 15', 'Zona 15'),
 ('Colegio Monte María', 'colegio', 'Boulevard Los Alamos, Zona 15', 'Zona 15'),
-
--- Paradas de Bus
 ('Parada 15 línea 3', 'parada_bus', 'Calzada Roosevelt, Zona 10', 'Zona 10'),
 ('Parada 22 línea 5', 'parada_bus', 'Avenida la Reforma, Zona 10', 'Zona 10'),
 ('Parada Central Zona 15', 'parada_bus', 'Boulevard Los Alamos, Zona 15', 'Zona 15'),
-
--- Supermercados
 ('Carrefour Zona 10', 'supermercado', 'Calzada Roosevelt, Zona 10', 'Zona 10'),
 ('Walmart Reforma', 'supermercado', 'Avenida la Reforma, Zona 10', 'Zona 10'),
 ('Despensa Familiar', 'supermercado', 'Boulevard Los Alamos, Zona 15', 'Zona 15'),
-
--- Parques
 ('Parque La Aurora', 'parque', 'Calzada Roosevelt, Zona 10', 'Zona 10'),
 ('Parque Los Alamos', 'parque', 'Boulevard Los Alamos, Zona 15', 'Zona 15'),
-
--- Hospital
 ('Hospital CIMA', 'hospital', 'Avenida la Reforma, Zona 10', 'Zona 10');
 
 -- ============================================================================
@@ -131,8 +120,7 @@ INSERT INTO propiedades_amenidades (propiedad_id, amenidad_id, distancia_km, not
 -- Propiedad 11 (Casa colonial 3 hab) - Boulevard Los Alamos
 INSERT INTO propiedades_amenidades (propiedad_id, amenidad_id, distancia_km, notas) VALUES
 (11, 5, 0.4, 'Muy cerca'),
-(11, 11, 0.3, 'A la esquina'),
-(11, 15, 0.8, 'Accesible');
+(11, 11, 0.3, 'A la esquina');
 
 -- Propiedad 12 (Casa nueva 2 hab) - Calle Principal
 INSERT INTO propiedades_amenidades (propiedad_id, amenidad_id, distancia_km, notas) VALUES
@@ -153,8 +141,7 @@ INSERT INTO propiedades_amenidades (propiedad_id, amenidad_id, distancia_km, not
 -- Propiedad 15 (Departamento premium) - Calle Principal
 INSERT INTO propiedades_amenidades (propiedad_id, amenidad_id, distancia_km, notas) VALUES
 (15, 4, 0.4, 'Muy cerca'),
-(15, 11, 0.5, 'Conveniente'),
-(15, 15, 0.9, 'Accesible');
+(15, 11, 0.5, 'Conveniente');
 
 -- Propiedad 16 (Terreno 1000m2 Zona 15) - Boulevard Los Alamos
 INSERT INTO propiedades_amenidades (propiedad_id, amenidad_id, distancia_km, notas) VALUES

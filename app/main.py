@@ -12,6 +12,7 @@ from app.di import ServiceContainer
 from app.presentation.routes import create_search_router
 from app.infrastructure.repositories.mysql_property_repo import MySQLPropertyRepository
 from app.infrastructure.llm.ollama_adapter import OllamaLLMAdapter
+from app.infrastructure.prompts.markdown_prompt_adapter import MarkdownPromptAdapter
 
 # Configure logging
 logging.basicConfig(
@@ -45,12 +46,17 @@ async def lifespan(app: FastAPI):
         # Initialize adapters
         logger.info("Initializing adapters...")
         property_repository = MySQLPropertyRepository()
-        llm_service = OllamaLLMAdapter(timeout=settings.OLLAMA_TIMEOUT)
+        prompt_service = MarkdownPromptAdapter()
+        llm_service = OllamaLLMAdapter(
+            prompt_service=prompt_service,
+            timeout=settings.OLLAMA_TIMEOUT
+        )
         
         # Initialize service container with adapters
         service_container_instance = ServiceContainer(
             property_repository=property_repository,
             llm_service=llm_service,
+            prompt_service=prompt_service,
         )
         
         # Store in global for use in routes
