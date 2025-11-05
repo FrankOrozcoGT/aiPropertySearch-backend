@@ -2,14 +2,13 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, status
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import db_connection
 from app.di import ServiceContainer
-from app.presentation.routes import create_search_router
+from app.presentation.routes import create_search_router, create_health_router
 from app.infrastructure.repositories.mysql_property_repo import MySQLPropertyRepository
 from app.infrastructure.llm.ollama_adapter import OllamaLLMAdapter
 from app.infrastructure.prompts.markdown_prompt_adapter import MarkdownPromptAdapter
@@ -70,8 +69,13 @@ async def lifespan(app: FastAPI):
         # Register routers after service container is initialized
         search_use_case = service_container.get_search_property_use_case()
         search_router = create_search_router(search_use_case)
+        health_router = create_health_router()
+        
         app.include_router(search_router, prefix=settings.API_PREFIX)
+        app.include_router(health_router)
+        
         logger.info(f"✓ Search router registered at {settings.API_PREFIX}/search")
+        logger.info(f"✓ Health router registered")
         
         logger.info("✅ Application started successfully")
         
@@ -117,39 +121,6 @@ app.add_middleware(
 )
 
 logger.info(f"✓ CORS configured for origins: {allowed_origins}")
-
-
-# Health Check Endpoint
-@app.get("/health", tags=["health"])
-async def health_check() -> dict:
-    """
-    Health check endpoint for monitoring.
-    
-    Verifies database connectivity and basic application status.
-    """
-    db_healthy = await db_connection.health_check()
-    
-    status_code = status.HTTP_200_OK if db_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
-    
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "status": "healthy" if db_healthy else "degraded",
-            "database": "connected" if db_healthy else "disconnected",
-        },
-    )
-
-
-# Ready Endpoint
-@app.get("/ready", tags=["health"])
-async def ready_check() -> dict:
-    """
-    Readiness check - indicates if app is ready to receive traffic.
-    """
-    return {
-        "ready": True,
-        "version": settings.APP_VERSION,
-    }
 
 
 logger.info(f"✓ FastAPI app initialized: {settings.APP_NAME} v{settings.APP_VERSION}")
